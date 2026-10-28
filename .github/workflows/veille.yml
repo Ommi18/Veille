@@ -1,0 +1,51 @@
+name: Veille billets
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  veille:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verifier la billetterie
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          pip install requests -q
+          python - <<'PY'
+          import os, re, requests
+
+          URL = "https://billetterie.fff.fr/fr/france_turquie_dimanche_15_novembre_2026/grand_public"
+          HEADERS = {"User-Agent": "Mozilla/5.0 (veille personnelle)"}
+
+          try:
+              html = requests.get(URL, headers=HEADERS, timeout=20).text
+          except requests.RequestException as e:
+              print("Erreur reseau :", e)
+              raise SystemExit(0)
+
+          texte = re.sub(r"<[^>]+>", " ", html)
+          texte = re.sub(r"\s+", " ", texte)
+          blocs = re.split(r"(?=CATEGORIE\s)", texte, flags=re.IGNORECASE)
+
+          dispo = []
+          for bloc in blocs:
+              m = re.match(r"(CATEGORIE\s+\w+)", bloc, flags=re.IGNORECASE)
+              if not m or "PLEIN TARIF" not in bloc.upper():
+                  continue
+              if "complet" not in bloc[:120].lower():
+                  dispo.append(m.group(1).title())
+
+          if dispo:
+              print("Places libres :", dispo)
+              requests.post(
+                  "https://ntfy.sh/" + os.environ["NTFY_TOPIC"],
+                  data=("Places libres : " + ", ".join(dispo)).encode("utf-8"),
+                  headers={"Title": "France-Turquie : places dispo !", "Priority": "urgent", "Click": URL},
+                  timeout=10,
+              )
+          else:
+              print("Tout est complet.")
+          PY
