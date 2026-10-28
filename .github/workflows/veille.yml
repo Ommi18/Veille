@@ -20,14 +20,16 @@ jobs:
 
           r = requests.get(URL, headers=HEADERS, timeout=20)
           html = r.text
-          low = html.lower()
           print("statut:", r.status_code, "| taille:", len(html))
-          print("occurrences de 'complet':", low.count("complet"))
-          print("occurrences de 'categorie':", low.count("categorie"))
+          print("CATEGORIE (majuscules):", html.count("CATEGORIE"), "| Complet:", html.count("Complet"))
 
-          for m in list(re.finditer("categorie", low))[:3]:
-              debut = max(0, m.start() - 150)
-              fin = m.start() + 350
-              print("-----")
+          n = 0
+          for m in re.finditer("CATEGORIE", html):
+              n += 1
+              if n > 2:
+                  break
+              print("----- bloc", n)
+              debut = max(0, m.start() - 100)
+              fin = m.start() + 700
               print(re.sub(r"\s+", " ", html[debut:fin]))
           PY
