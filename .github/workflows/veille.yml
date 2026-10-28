@@ -10,26 +10,52 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Verifier la billetterie
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           pip install requests -q
           python - <<'PY'
-          import re, requests
+          import os, re, requests
 
           URL = "https://billetterie.fff.fr/fr/france_turquie_dimanche_15_novembre_2026/grand_public"
           HEADERS = {"User-Agent": "Mozilla/5.0 (veille personnelle)"}
 
-          r = requests.get(URL, headers=HEADERS, timeout=20)
-          html = r.text
-          print("statut:", r.status_code, "| taille:", len(html))
-          print("CATEGORIE (majuscules):", html.count("CATEGORIE"), "| Complet:", html.count("Complet"))
+          try:
+              html = requests.get(URL, headers=HEADERS, timeout=20).text
+          except requests.RequestException as e:
+              print("Erreur reseau :", e)
+              raise SystemExit(0)
 
-          n = 0
-          for m in re.finditer("CATEGORIE", html):
-              n += 1
-              if n > 2:
-                  break
-              print("----- bloc", n)
-              debut = max(0, m.start() - 100)
-              fin = m.start() + 700
-              print(re.sub(r"\s+", " ", html[debut:fin]))
+          categories = {}
+          for m in re.finditer(r"<li[^>]*js-list-categories[^>]*>", html):
+              tag = m.group(0)
+              nom = re.search(r'data-name="([^"]*)"', tag)
+              nb = re.search(r'data-nb-place="(\d+)"', tag)
+              if not nom:
+                  continue
+              suite = html[m.end():m.end() + 1500].split("<li")[0]
+              stock = re.search(r'category-stock">\s*([^<]*?)\s*<', suite)
+              stock = stock.group(1) if stock else None
+              places = int(nb.group(1)) if nb else 0
+              libre = (stock is None) or ("complet" not in stock.lower()) or places > 0
+              categories[nom.group(1)] = (libre, stock, places)
+
+          if not categories:
+              print("Aucune categorie lue : la page a peut-etre change.")
+              raise SystemExit(0)
+
+          for nom, (libre, stock, places) in categories.items():
+              print(f"{nom} : {stock} | places={places} | libre={libre}")
+
+          dispo = [nom for nom, (libre, _, _) in categories.items() if libre]
+          if dispo:
+              print("Places libres :", dispo)
+              requests.post(
+                  "https://ntfy.sh/" + os.environ["NTFY_TOPIC"],
+                  data=("Places libres : " + ", ".join(dispo)).encode("utf-8"),
+                  headers={"Title": "France-Turquie : places dispo !", "Priority": "urgent", "Click": URL},
+                  timeout=10,
+              )
+          else:
+              print("Tout est complet.")
           PY
